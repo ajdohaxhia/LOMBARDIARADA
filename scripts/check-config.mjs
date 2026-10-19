@@ -13,6 +13,10 @@ export function inspectConfig(env) {
     if (!value || /YOUR_|INSERISCI|example/i.test(value))
       problems.push(`${name}: manca un valore reale.`);
   }
+  if (/^[123]x0{20}(AA|AB|BB|FF)$/.test(env.VITE_TURNSTILE_SITE_KEY || ""))
+    problems.push(
+      "VITE_TURNSTILE_SITE_KEY: chiave Turnstile di prova vietata nel build di produzione.",
+    );
   try {
     const url = new URL(env.VITE_SUPABASE_URL);
     if (

@@ -1,4 +1,8 @@
 begin;
+create schema if not exists extensions;
+create extension if not exists pgtap with schema extensions;
+grant usage on schema extensions to anon,authenticated;
+set local search_path=public,extensions;
 select plan(11);
 insert into auth.users(id) values('30000000-0000-0000-0000-000000000001');
 select lives_ok($$select public.submit_contribution('30000000-0000-0000-0000-000000000001','{"kind":"report","title":"Prova invio","description":"Descrizione prova invio","zone":"Milano","category":"altro","latitude":45.4642,"longitude":9.1899,"event_at":"2026-10-19T12:00:00Z","testimony":"direct","editorial_status":"approved","fact_status":"corroborated"}')$$,'Backend accepts valid report');

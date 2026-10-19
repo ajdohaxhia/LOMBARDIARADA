@@ -1,3 +1,10 @@
+// Cloudflare's documented dummy secrets contain 31 zeroes (35 characters total).
+// https://developers.cloudflare.com/turnstile/troubleshooting/testing/
+export function validateDeploymentSecret(secret: string): void {
+ if (!secret.trim() || /^[123]x0{31}AA$/.test(secret.trim())) {
+  throw new Error('Configurare TURNSTILE_SECRET_KEY con una chiave reale prima di avviare il backend.');
+ }
+}
 export interface SubmitDependencies {
  allowedOrigin: string;
  hostname: string;

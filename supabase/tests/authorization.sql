@@ -1,4 +1,8 @@
 begin;
+create schema if not exists extensions;
+create extension if not exists pgtap with schema extensions;
+grant usage on schema extensions to anon,authenticated;
+set local search_path=public,extensions;
 select plan(10);
 select has_table('public','contributions');
 select has_table('public','moderation_log');

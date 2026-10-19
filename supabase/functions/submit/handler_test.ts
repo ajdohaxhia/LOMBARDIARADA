@@ -1,4 +1,4 @@
-import {createHandler, type SubmitDependencies} from './handler.ts';
+import {createHandler, validateDeploymentSecret, type SubmitDependencies} from './handler.ts';
 function assert(condition: unknown,message='Assertion failed'): asserts condition { if(!condition) throw new Error(message); }
 const origin='https://radar.example';
 function fixture(overrides: Partial<SubmitDependencies>={}) {
@@ -63,4 +63,19 @@ Deno.test('streamed multibyte payload is bounded in bytes and cancelled',async()
 });
 Deno.test('Turnstile unavailable fails closed',async()=>{
  const f=fixture({verify:async()=>new Response('',{status:503})});assert((await f.handle(request())).status===503);assert(f.calls.length===0);
+});
+
+Deno.test('deployment rejects all documented dummy secrets without revealing values',()=>{
+ for (const prefix of ['1','2','3']) {
+  const secret=prefix+'x'+'0'.repeat(31)+'AA';
+  let caught=false;
+  try { validateDeploymentSecret(secret); } catch(error) {
+   caught=true;assert(error instanceof Error);assert(!error.message.includes(secret));
+  }
+  assert(caught,'Dummy secret must fail startup');
+ }
+ validateDeploymentSecret('real-key-format-is-provider-owned');
+});
+Deno.test('deployment rejects blank secret',()=>{
+ let caught=false;try {validateDeploymentSecret(' ');}catch{caught=true;}assert(caught);
 });

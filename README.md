@@ -1,125 +1,170 @@
 # LOMBARDIA RADAR
 
-Sito civico in italiano, mobile-first, con React, TypeScript, Vite, Supabase e Leaflet. La prima copertura operativa è Milano, con bacheche di quartiere; il nome non implica una copertura completa della Lombardia. Il repository contiene il codice e le istruzioni: non è un servizio già pubblicato o configurato.
+Frontend React/TypeScript/Vite su **Cloudflare Pages**; autenticazione, PostgreSQL/RLS e funzione `submit` su **Supabase**; verifica anti-abuso **Cloudflare Turnstile** e mappa Leaflet/OpenStreetMap. Nessuna Pages Function, Worker, API AI, SMS o servizio a pagamento è richiesto.
 
-**Nessuna segnalazione non significa assenza di rischi.** Il sito non è un servizio di emergenza. Non offre percorsi garantiti sicuri, tracciamento delle persone, foto, video, messaggi privati o classifiche di quartieri pericolosi.
+**Stato della consegna:** codice verificato localmente, nessun deploy o controllo dei tuoi progetti cloud effettuato. Avere gli account pronti non imposta automaticamente variabili, database, Google OAuth o Turnstile. Non sono presenti `.env` reali, progetti Supabase collegati o dati dimostrativi caricati dall’app.
 
-## Attivazione rapida: ordine operativo
+Come richiesto nell’ultima modifica, le **segnalazioni sono pubbliche subito**, senza revisione preventiva e con fatti inizialmente **non verificati**. Post e notizie restano privati in revisione. Revisione editoriale e verifica dei fatti restano separate.
 
-1. **Supabase:** crea un progetto Free su [Supabase](https://supabase.com/dashboard), conserva la password DB fuori dal codice, quindi applica la migrazione con i comandi sotto. Copia URL progetto e chiave pubblica da Settings → API in `.env.local`.
-2. **Google:** configura il client OAuth e abilita il provider Google in Supabase seguendo la sezione dedicata. Il segreto Google va esclusivamente nella dashboard Supabase.
-3. **Cloudflare Pages:** crea un progetto su [Cloudflare](https://dash.cloudflare.com/) con build `npm run build:production` e output `dist`. Conserva il dominio gratuito `NOME.pages.dev` per i passaggi successivi.
-4. **Turnstile:** crea un widget per quel dominio, inserisci la site key pubblica tra le variabili Vite e i tre segreti backend elencati sotto nella dashboard Supabase. Distribuisci la funzione `submit`.
-5. **Accesso e moderazione:** autorizza il dominio Pages nei redirect OAuth, ridistribuisci il frontend con le variabili impostate, accedi con Google e assegna il primo moderatore dal SQL Editor amministrativo.
-6. **Verifica prima dell’apertura:** invia una segnalazione reale pertinente e controlla che sia subito pubblica con etichetta non verificata e non revisionata; verifica che un post di quartiere resti privato fino all’approvazione. Pubblica contatto del gestore e informativa privacy. Non usare eventi di prova nel progetto pubblico.
+**Nessuna segnalazione non significa assenza di rischi.** Non è un servizio di emergenza. In caso di pericolo immediato: 112.
 
-Finché questi passaggi non sono completati, l’anteprima è navigabile ma non riceve contributi. Non inserire chiavi segrete in chat, nel repository o nelle variabili `VITE_*`.
+## 1. Valori da raccogliere e destinazione esatta
 
-## Avvio locale
+Non incollare segreti in chat o in Git. `.env.example` elenca tutti i nomi effettivamente letti dal codice; le sezioni backend sono commentate intenzionalmente. Non caricare l’intero template in Pages.
 
-Richiede Node.js 22 LTS e npm. Per il database locale servono Supabase CLI e Docker.
+| Nome esatto | Dove trovare il valore | Dove inserirlo | Visibilità |
+| --- | --- | --- | --- |
+| `VITE_SUPABASE_URL` | Supabase → progetto → Connect / Settings → API: Project URL | Locale: `.env.local`; Pages → progetto → Settings → Variables and Secrets (o Environment variables) → Production | Pubblica |
+| `VITE_SUPABASE_ANON_KEY` | Supabase → Settings → API Keys: **Publishable key** `sb_publishable_…`, oppure Legacy API Keys → **anon** | Stesse due destinazioni del valore precedente | Pubblica; mai `secret`/`service_role` |
+| `VITE_TURNSTILE_SITE_KEY` | Cloudflare → Turnstile → widget produzione → **Site key** | `.env.local` per un widget locale separato; Pages → Production per widget produzione | Pubblica |
+| `TURNSTILE_SECRET_KEY` | Stesso widget Turnstile → **Secret key** | **Supabase → Edge Functions → Secrets**, Key/Value → Save | Segreto backend |
+| `APP_ORIGIN` | Origine HTTPS effettiva di Pages, es. `https://NOME.pages.dev` | Supabase → Edge Functions → Secrets | Config backend, nessuno slash finale |
+| `TURNSTILE_HOSTNAME` | Solo dominio, es. `NOME.pages.dev` | Supabase → Edge Functions → Secrets | Config backend, senza protocollo/porta/percorso |
+| `SUPABASE_URL` | Fornita automaticamente da Supabase hosted | Nessuna azione: il runtime Edge la fornisce | Backend |
+| `SUPABASE_SERVICE_ROLE_KEY` | Fornita automaticamente da Supabase hosted | Nessuna azione: non tentare di creare un segreto `SUPABASE_*` | Segreto privilegiato, mai frontend/Pages |
 
-```sh
-npm install
-cp .env.example .env.local
-npm run dev
-```
+Il nome `VITE_SUPABASE_ANON_KEY` rimane per compatibilità: accetta anche la nuova chiave pubblica publishable. **Non usare una chiave privilegiata per far sparire un errore RLS.** I due valori Google OAuth non sono variabili lette da Vite o dalla funzione: vanno soltanto nel provider Google di Supabase (sezione 4). `NODE_VERSION=22` è una variabile di build Pages, non dell’app.
 
-Compilare `.env.local` con URL e chiave pubblica Supabase e site key pubblica Turnstile. Ogni variabile `VITE_*` è leggibile da chi visita il sito. Non inserirvi mai chiavi `service_role`, password del database, segreto OAuth Google o segreto Turnstile. Non committare file `.env.local` o esportazioni del database.
+Documentazione: [chiavi Supabase](https://supabase.com/docs/guides/getting-started/api-keys), [variabili Edge e valori automatici](https://supabase.com/docs/guides/functions/secrets).
 
-```sh
-npm test
-npm run test:config
-npm run build
-npm run preview
-```
+## 2. Preparare Cloudflare Pages e il dominio
 
-Il sito non carica dati dimostrativi. Le notizie pubbliche devono provenire da contenuti redazionali reali con fonte. Per una prova completa dei flussi usare due normali utenti distinti e un moderatore in un progetto Supabase di test.
+Cloudflare → **Workers & Pages → Create application → Pages → Connect to Git**. Seleziona GitHub e il repository `ajdohaxhia/LOMBARDIARADA`.
 
-## Controllo della configurazione produzione
-
-```sh
-npm run check:config
-npm run test:config
-npm run build:production
-```
-
-`check:config` legge le variabili locali e di ambiente senza stamparne i valori: rifiuta placeholder, URL errati, variabili pubbliche inattese e chiavi segrete riconoscibili. `test:config` verifica il controllo. `build:production` esegue il controllo prima del build; `npm run build` resta disponibile per un'anteprima locale anche senza servizi configurati. Un controllo superato non prova che Google, Turnstile, RLS e backend siano attivi: completare la prova operativa. In questa consegna non è stata configurata né pubblicata alcuna infrastruttura cloud.
-
-## Supabase e Google
-
-1. Creare un progetto **Free** su Supabase. Conservare la password DB in un gestore di password.
-2. Eseguire dalla radice del repository `supabase login`, poi `supabase link --project-ref YOUR_PROJECT_REF` e `supabase db push`. Le migrazioni versionate in `supabase/migrations/` sono la fonte dello schema. Per un database locale nuovo usare `supabase start` e `supabase db reset`; reset elimina i dati locali.
-3. In Google Cloud creare un client OAuth di tipo Web e la schermata di consenso. Registrare il callback esatto mostrato in Supabase → Authentication → Providers → Google, normalmente `https://YOUR_PROJECT_REF.supabase.co/auth/v1/callback`. Client ID e Client Secret vanno nella configurazione Google di Supabase, mai nel frontend. Per prove con OAuth in modalità test aggiungere gli account di test nella console Google.
-4. In Supabase Authentication → URL Configuration impostare Site URL all'origine di produzione e autorizzare esplicitamente gli URL di ritorno locali e di produzione (`http://localhost:5173/` e `https://YOUR_PROJECT.pages.dev/`). Aggiungere solo le anteprime realmente necessarie, evitando wildcard indiscriminate.
-5. Abilitare solo i provider desiderati. Il frontend richiede Google; una configurazione OAuth incompleta impedirà il login, senza concedere privilegi alternativi.
-
-Guida ufficiale: [Google con Supabase](https://supabase.com/docs/guides/auth/social-login/auth-google).
-
-## Turnstile e backend di invio
-
-Creare un widget Turnstile gratuito per gli hostname effettivi (locale e produzione separati). Il widget usa l'azione `submit`. La site key va nel frontend; il segreto resta in Supabase Edge Functions. Per la produzione impostare questi segreti da dashboard Supabase, senza committarli né incollarli nella cronologia shell:
-
-| Segreto backend | Valore |
+| Impostazione Pages | Valore |
 | --- | --- |
-| `TURNSTILE_SECRET_KEY` | Segreto del widget produzione |
-| `APP_ORIGIN` | Origine esatta, es. `https://YOUR_PROJECT.pages.dev`, senza slash finale |
-| `TURNSTILE_HOSTNAME` | Solo hostname, es. `YOUR_PROJECT.pages.dev` |
+| Production branch | `codex/lombardia-radar` (branch esistente; non presumere `main`) |
+| Framework preset | Vite; in alternativa None con gli stessi parametri manuali |
+| Root directory | Radice del repository (campo vuoto) |
+| Build command | `npm run build:production` |
+| Build output directory | `dist` |
+| Build environment variable | `NODE_VERSION` = `22` |
+| Production variables | **Solo le tre `VITE_*`** della tabella |
 
-`SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` sono disponibili nel runtime Edge Supabase. Il service role bypassa RLS: non distribuirlo mai al browser. Pubblicare la funzione con:
+Scegli un nome progetto e annota l’hostname Pages previsto. Il nome effettivo viene confermato da Cloudflare dopo il deploy: se differisce, aggiorna Turnstile, i due valori backend dell’origine e gli URL OAuth. Nessun dominio viene prenotato da questo README. Non distribuire prima di aver completato i passaggi seguenti; se il primo build parte troppo presto, lascialo fallire e riprovalo a configurazione completa, senza rimuovere `check:config`.
+
+Le variabili Vite vengono incorporate nel bundle: dopo ogni modifica occorre un nuovo build/deploy. Non assegnare segreti Supabase o Turnstile a Pages, neppure con visibilità “Secret”: il backend gira su Supabase. Disabilita le anteprime non necessarie; per provarle usa un progetto Supabase e un widget separati. Il backend accetta una sola origine esatta e non autorizza automaticamente gli URL delle preview.
+
+`public/_headers` viene incluso in `dist`: imposta CSP, protezioni iframe, disabilitazione camera/microfono/geolocalizzazione e Referrer-Policy compatibile con OSM. La CSP permette il dominio standard `*.supabase.co`; questa guida non usa domini Supabase personalizzati. Non serve un `wrangler.toml`: il sito Pages è statico e le impostazioni sopra sono quelle operative.
+
+Fonti: [integrazione Git](https://developers.cloudflare.com/pages/get-started/git-integration/), [build configuration](https://developers.cloudflare.com/pages/configuration/build-configuration/), [versione Node](https://developers.cloudflare.com/pages/configuration/build-image/).
+
+## 3. Supabase: migrazioni SQL e ordine
+
+Seleziona il progetto **Free** corretto. Per la prima installazione il database applicativo deve essere nuovo. C’è **una sola migrazione**, da applicare una sola volta:
+
+1. `supabase/migrations/202610190001_radar.sql` — enum, tabelle, indici, RLS, ruoli protetti, RPC invio/moderazione, audit e limiti atomici.
+
+Metodo consigliato, dalla radice del repository con Supabase CLI installata:
+
+```sh
+supabase login
+supabase link --project-ref YOUR_PROJECT_REF
+supabase migration list
+supabase db push --dry-run
+supabase db push
+supabase migration list
+```
+
+`YOUR_PROJECT_REF` è il riferimento progetto mostrato nella dashboard; non è il nome del sito. Verifica progetto e lista prima di `db push`; inserisci la password database solo nel prompt sicuro della CLI. Dopo il push la migrazione deve apparire applicata anche in remoto. Se la CLI manca, installala seguendo la [guida ufficiale](https://supabase.com/docs/guides/local-development/cli/getting-started).
+
+Alternativa senza CLI per lo schema: Supabase → **SQL Editor → New query**, incolla il file completo della migrazione ed eseguilo una volta. Se tabelle o tipi esistono già, fermati e controlla cosa è stato applicato: non cancellare il database e non rilanciare alla cieca. Questo metodo non registra la storia nella CLI. Se poi passi alla CLI, dopo aver verificato che lo schema corrisponda al file, allinea il registro con `supabase migration repair 202610190001 --status applied`; questo comando registra la versione, non applica lo SQL.
+
+**Non applicare in produzione** `supabase/tests/*.sql`: contengono fixture isolate per le prove. Il file `editorial/2026-10-20-prime-notizie.sql` contiene annunci reali datati, non è una migrazione, non è un seed automatico e non serve al lancio. Lascialo escluso finché le fonti e l’attualità non sono state rivalutate.
+
+## 4. Google OAuth e URL di ritorno
+
+1. Supabase → **Authentication → Sign In / Providers → Google**: copia il callback del progetto, normalmente `https://YOUR_PROJECT_REF.supabase.co/auth/v1/callback`.
+2. Google Cloud Console → **Google Auth Platform / APIs & Services → Credentials**: configura schermata di consenso e client OAuth di tipo **Web application**. In **Authorized redirect URIs** inserisci il callback Supabase del punto 1, non il dominio Pages. Se richieste, le **Authorized JavaScript origins** sono l’origine Pages e l’origine locale usata.
+3. Copia **Client ID** e **Client Secret** nei corrispondenti campi del provider Google di Supabase, abilita il provider e salva. Nessuno dei due va nelle variabili Vite. In modalità Google Testing aggiungi il tuo account agli utenti di test; per accesso pubblico completa la pubblicazione della schermata di consenso secondo i requisiti della console Google.
+4. Supabase → **Authentication → URL Configuration**: **Site URL** = `https://NOME.pages.dev`; tra **Redirect URLs** aggiungi esattamente `https://NOME.pages.dev` (origine usata dal codice) e, solo per sviluppo, `http://localhost:5173`. Non autorizzare wildcard generiche.
+
+Fonte: [Google OAuth Supabase](https://supabase.com/docs/guides/auth/social-login/auth-google), [Redirect URLs](https://supabase.com/docs/guides/auth/redirect-urls).
+
+## 5. Turnstile e funzione backend separata
+
+Cloudflare → **Turnstile → Add widget**: scegli il widget Managed e consenti l’hostname effettivo `NOME.pages.dev`, senza `https://`. Usa un widget separato per localhost. Copia la **Site key** pubblica in Pages e la **Secret key** in Supabase → **Edge Functions → Secrets**. Nella stessa pagina inserisci `APP_ORIGIN` e `TURNSTILE_HOSTNAME` dalla tabella. Non usare le chiavi di test Cloudflare in produzione.
+
+Pubblica la funzione completa, dalla radice del repository:
 
 ```sh
 supabase functions deploy submit
 ```
 
-Il client invia a `submit` il JWT dell'utente e `{ action: 'contribution' | 'abuse', turnstileToken, data }`. Il backend verifica la sessione con Supabase, chiama Siteverify, controlla hostname e azione e poi usa RPC riservate al service role. Non basta mostrare il widget: token mancante, scaduto, riutilizzato o non valido deve bloccare l'invio. I token Turnstile sono monouso e durano cinque minuti: [verifica server ufficiale](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/).
+La CLI distribuisce `supabase/functions/submit/index.ts` e la dipendenza locale `handler.ts`. Non incollare solo `index.ts` in un editor remoto senza `handler.ts`. L’endpoint diventa `https://YOUR_PROJECT_REF.supabase.co/functions/v1/submit`; il frontend lo individua tramite Supabase, senza un’ulteriore variabile.
 
-I limiti sono atomici nel database, per account e ora: 5 contributi e 10 segnalazioni di abuso. Il login è richiesto anche per gli abusi. Un utente non può chiamare direttamente le RPC di invio, scegliere un altro autore o inserire una riga approvata. Il limite per account non impedisce da solo la creazione coordinata di più account: Turnstile e moderazione restano necessari. Il backend accetta una sola origine esatta; per sviluppo usare una configurazione/progetto di test separato, non allargare la produzione a origini arbitrarie.
+`supabase/config.toml` contiene già `[functions.submit] verify_jwt = false`. Mantieni questa impostazione: disabilita il controllo legacy del gateway, **non** l’autenticazione applicativa. La funzione controlla il Bearer token con `auth.getUser` prima di usare il client privilegiato. Se modifichi le opzioni JWT dalla dashboard della funzione, non riattivare il controllo legacy senza adattare l’integrazione.
 
-## Primo moderatore e test di autorizzazione
+Flusso implementato: origine esatta → autenticazione server → corpo limitato a 20.000 byte → verifica Turnstile Siteverify (`success`, hostname, azione `submit`) → campi ammessi → RPC di invio riservata al service role. Limiti atomici: **5 contributi/ora/account**, **10 abusi/ora/account**. Il client non sceglie autore, ruolo, stato editoriale o riscontro fattuale. Il token Turnstile è monouso; il widget viene rinnovato dopo ciascun tentativo.
 
-Far accedere il futuro moderatore con Google, leggere il suo UUID da Supabase Authentication → Users, poi eseguire **solo nel SQL Editor amministrativo**:
+Non ci sono percorsi di successo simulati nel codice distribuito. I mock sono soltanto nei test e non vengono importati dall’entrypoint Vite o dall’entrypoint Edge. Le richieste senza configurazione, autenticazione o verifica falliscono.
+
+Fonti: [deploy Edge](https://supabase.com/docs/guides/functions/deploy), [Siteverify](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/), [chiavi di test](https://developers.cloudflare.com/turnstile/troubleshooting/testing/).
+
+## 6. Assegnare al proprio account il ruolo di moderatore
+
+Dopo il primo deploy, apri il sito e accedi con Google una volta. In Supabase → **Authentication → Users**, trova il tuo account e copia il suo **User UID**. Poi, **solo nel SQL Editor amministrativo**, sostituisci l’UUID e lancia:
 
 ```sql
 insert into public.moderators(user_id)
-values ('UUID_UTENTE_GIA_AUTENTICATO');
+values ('UUID_DEL_TUO_ACCOUNT')
+on conflict (user_id) do nothing;
 ```
 
-Non usare metadati modificabili dall'utente per assegnare il ruolo. Per revocarlo, eliminare la relativa riga dalla stessa tabella con accesso amministrativo. Non esporre questa operazione in un endpoint pubblico.
+La chiave esterna richiede che l’utente esista già. Per controllare l’assegnazione:
 
-Il pannello usa `moderate_contribution` per approvare, correggere, rifiutare, unire e archiviare, con registro delle modifiche. `contributions` consente al pubblico righe `published` o `approved` e soli campi pubblici, all'autore le proprie righe, ai moderatori la coda. Identificativi degli autori, abusi, registro e limiti non sono dati pubblici.
+```sql
+select user_id from public.moderators
+where user_id = 'UUID_DEL_TUO_ACCOUNT';
+```
 
-Eseguire i test SQL su un database **locale di prova** prima del deploy:
+Ricarica il sito o esci e rientra: deve comparire **Moderazione** (il ruolo viene ricontrollato anche al focus e ogni minuto). Per revocare il ruolo usa `delete from public.moderators where user_id = 'UUID_DEL_TUO_ACCOUNT';` nel SQL Editor. Non assegnare il ruolo attraverso `user_metadata`, browser o chiave pubblica: RLS e privilegi impediscono l’autopromozione.
+
+## 7. Verifiche locali e prova cloud finale
+
+Node.js 22 per il build di produzione. Dalla radice:
+
+```sh
+npm ci
+npm test
+npm run test:config
+deno test supabase/functions/submit/handler_test.ts
+deno check supabase/functions/submit/index.ts
+npm audit
+npm run build
+```
+
+Per anteprima locale, crea `.env.local` con le sole tre variabili pubbliche e avvia `npm run dev`. Per preparare il bundle destinato a Pages, dopo aver impostato valori **reali**:
+
+```sh
+npm run check:config
+npm run build:production
+```
+
+Il controllo rifiuta placeholder, site key Turnstile di prova, URL non validi e chiavi privilegiate riconoscibili; non stampa valori. Un successo del controllo non prova che OAuth, segreti, schema o domini siano corretti. Non usare valori inventati per forzare un build di produzione.
+
+Per RLS con ambiente Supabase locale completo occorrono Docker e Supabase CLI:
 
 ```sh
 supabase start
 supabase db reset
 supabase test db
-deno test supabase/functions/submit/handler_test.ts
 ```
 
-I test devono coprire anonimo, due utenti e moderatore: isolamento dei privati, impossibilità di autopromozione/inserimento diretto, autorizzazione della moderazione, fonte obbligatoria per riscontro e notizie, duplicati e limiti. Il reset distrugge il database locale: non usarlo come comando operativo sul progetto pubblico. I test frontend con `npm test` non sostituiscono i test RLS reali. Verificare inoltre con account di test il percorso OAuth → invio Turnstile → segnalazione pubblicata subito; per post/notizie verificare coda → approvazione → lettura pubblica e i rifiuti di token errati e richieste oltre limite.
+I file SQL di test predispongono pgTAP; usano utenti/fixture solo dentro transazioni annullate. `db reset` distrugge i dati locali: non è un comando da applicare al progetto pubblico.
 
-## Regole editoriali e privacy
+**Controlli eseguiti il 20 ottobre 2026:** build Vite/TypeScript riuscito; 49 test frontend, 7 test configurazione e 15 test Deno superati; audit npm con zero vulnerabilità. `build:production` si arresta correttamente perché in questo workspace non sono ancora presenti le tre variabili pubbliche reali. Le prove RLS eseguite su PostgreSQL isolato usano uno schema Auth locale e helper compatibili con pgTAP: non equivalgono a un test effettuato sul tuo progetto Supabase. L’ambiente Supabase completo e il percorso Google/Turnstile reali restano da verificare dopo la configurazione.
 
-L'approvazione editoriale è separata dallo stato dei fatti: **non verificata**, **con riscontro** con fonte, **smentita**. Le segnalazioni (`report`) diventano immediatamente pubbliche nello stato editoriale `published`, senza revisione e con stato fattuale iniziale non verificata. Il moderatore può successivamente correggerle, approvarle, rifiutarle, unirle o archiviarle. `approved` indica una revisione editoriale, non una certificazione di verità. Post di quartiere (`post`) e notizie redazionali (`news`) iniziano invece in `pending` e diventano pubblici solo dopo approvazione. I voti non verificano eventi. L'accesso è applicato dal database con RLS e funzioni controllate.
+Dopo **Save and Deploy** su Pages, svolgi questi controlli da browser con account di prova e progetto Supabase di test, senza pubblicare eventi inventati nel progetto pubblico:
 
-La finestra delle ultime 24 ore usa l'ora dell'evento, non l'ultimo aggiornamento. Un evento vecchio esce dalla vista senza diventare risolto. Archiviazione, rifiuto e unione di duplicati sono operazioni editoriali distinte dalla verifica.
+- Google apre il consenso e riporta al dominio Pages; la sessione resta attiva dopo un ricaricamento.
+- Una segnalazione pertinente diventa `published`, senza revisione e **non verificata**; un post resta `pending` e invisibile al secondo utente e all’anonimo.
+- Il moderatore legge la coda, corregge/approva/rifiuta/unisce/archivia. Le modifiche generano audit; una correzione obsoleta viene rifiutata.
+- Da sessione anonima non si leggono bozze, autori, abusi o registro; una chiave pubblica non scrive direttamente nelle tabelle e non assegna ruoli.
+- Token Turnstile mancante, scaduto, già usato, con hostname/azione errati impediscono l’invio; oltre il limite orario il backend risponde 429. Guarda **Edge Functions → submit → Logs**, senza stampare token o chiavi.
+- Dopo il deploy `dist` non contiene SQL, `.env`, fixture o codice test; l’attribuzione OSM è visibile da mobile e la console non segnala blocchi CSP della mappa/Turnstile.
 
-Usare punti approssimativi, senza geolocalizzare chi scrive. Non inserire nomi di persone, targhe, recapiti privati o indirizzi domestici nelle descrizioni; rimuovere tempestivamente questi contenuti e gestire le segnalazioni di abuso. Prima dell'apertura pubblica definire contatto del gestore, informativa privacy, gestione delle richieste di cancellazione e tempi di conservazione anche per contributi rifiutati, abusi e log. Le richieste di tile, autenticazione e Turnstile coinvolgono i rispettivi fornitori: descriverlo nell'informativa.
-
-## Prime notizie redazionali reali
-
-Il file `editorial/2026-10-20-prime-notizie.sql` è un pacchetto editoriale opzionale con notizie reali e fonti, separato dalle migrazioni e senza seed automatici. Prima di eseguirlo leggere ogni fonte, verificare date e attualità e rivedere i riassunti. Eseguirlo esclusivamente nel SQL Editor amministrativo del progetto scelto, seguendo i commenti del file. Non è necessario per avviare il sito e non va copiato nella cartella `public/`. La presenza di una fonte non trasforma automaticamente una segnalazione in fatto verificato.
-
-## Cloudflare Pages
-
-1. Creare un progetto Pages nel piano gratuito collegando il repository oppure caricando il build locale. Questo passaggio pubblica il sito: eseguirlo solo sull'account e dominio scelti dal gestore.
-2. Impostare comando di build `npm run build:production`, cartella di output `dist`, Node.js 22. Impostare in Pages le stesse tre variabili pubbliche di `.env.example` per l'ambiente di produzione; le anteprime devono usare un progetto Supabase separato se contengono prove.
-3. Configurare prima gli hostname Turnstile e gli URL OAuth del dominio Pages, poi eseguire il deploy. Per cambiare una variabile Vite occorre un nuovo build.
-4. Controllare da mobile login, pubblicazione immediata delle segnalazioni, revisione dei post, approvazione e lettura pubblica; verificare che un secondo utente non legga i contributi privati del primo. Non distribuire SQL o segreti nella cartella `public/`.
-
-Il frontend è statico; le operazioni privilegiate sono eseguite nel backend Supabase, non in Pages Functions. Nessuna API AI, SMS o servizio a pagamento è necessario. Usare il dominio gratuito `pages.dev` evita il costo di un dominio personalizzato.
+Questi controlli cloud non sono dichiarati superati finché non vengono eseguiti sui servizi reali. Prima dell’apertura pubblica inserisci contatto del gestore e informativa privacy: nessun tracciamento persone, foto/video, messaggistica privata, classifiche di pericolosità o percorsi garantiti sicuri. La finestra 24 ore dipende dall’ora dell’evento; un evento vecchio non diventa automaticamente risolto.
 
 ## Mappe OpenStreetMap
 

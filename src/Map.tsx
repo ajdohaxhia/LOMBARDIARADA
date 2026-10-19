@@ -55,7 +55,6 @@ export default function RadarMap({
               <p>
                 {formatDate(c.event_at)} · {facts[c.fact_status]}
               </p>
-              {c.id.startsWith("demo-") && <b>ESEMPIO INVENTATO</b>}
             </Popup>
           </CircleMarker>
         ))}

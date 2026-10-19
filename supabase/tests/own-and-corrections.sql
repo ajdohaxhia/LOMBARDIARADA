@@ -1,4 +1,8 @@
 begin;
+create schema if not exists extensions;
+create extension if not exists pgtap with schema extensions;
+grant usage on schema extensions to anon,authenticated;
+set local search_path=public,extensions;
 select plan(11);
 insert into auth.users(id) values('40000000-0000-0000-0000-000000000001'),('40000000-0000-0000-0000-000000000002');
 insert into public.moderators values('40000000-0000-0000-0000-000000000002');

@@ -44,3 +44,19 @@ test("legge env senza eseguire comandi", () =>
     parseEnv('# hi\nexport VITE_A="$(echo nope)"\nVITE_B=x # comment\n'),
     { VITE_A: "$(echo nope)", VITE_B: "x" },
   ));
+
+test("blocca site key Turnstile di prova in produzione", () => {
+  for (const value of [
+    "1x00000000000000000000AA",
+    "2x00000000000000000000AB",
+    "1x00000000000000000000BB",
+    "2x00000000000000000000BB",
+    "3x00000000000000000000FF",
+  ]) {
+    assert.ok(
+      inspectConfig({ ...valid, VITE_TURNSTILE_SITE_KEY: value }).some((x) =>
+        x.includes("Turnstile di prova"),
+      ),
+    );
+  }
+});
