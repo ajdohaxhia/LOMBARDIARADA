@@ -5,6 +5,7 @@ const valid = {
   VITE_SUPABASE_URL: "https://test.supabase.co",
   VITE_SUPABASE_ANON_KEY: "sb_publishable_public",
   VITE_TURNSTILE_SITE_KEY: "site-key",
+  VITE_TURNSTILE_AUTH_SITE_KEY: "auth-site-key",
 };
 test("accetta solo configurazione pubblica prevista", () =>
   assert.deepEqual(inspectConfig(valid), []));
@@ -59,4 +60,11 @@ test("blocca site key Turnstile di prova in produzione", () => {
       ),
     );
   }
+});
+
+ test("richiede la site key CAPTCHA per Anonymous Sign-Ins", () => {
+  assert.ok(inspectConfig({ ...valid, VITE_TURNSTILE_AUTH_SITE_KEY: "" }).some((x) => x.includes("VITE_TURNSTILE_AUTH_SITE_KEY")));
+});
+test("rifiuta una chiave CAPTCHA Auth di prova in produzione", () => {
+  assert.ok(inspectConfig({ ...valid, VITE_TURNSTILE_AUTH_SITE_KEY: "1x00000000000000000000AA" }).some((x) => x.includes("VITE_TURNSTILE_AUTH_SITE_KEY") && x.includes("Turnstile di prova")));
 });

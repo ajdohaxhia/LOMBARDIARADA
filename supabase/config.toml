@@ -1,4 +1,18 @@
 project_id = "lombardia-radar"
+
+[auth]
+enable_anonymous_sign_ins = true
+
+[auth.rate_limit]
+# Auth enforces this per IP, before a new UID exists. Hosted projects need dashboard setup.
+anonymous_users = 5
+
+[auth.captcha]
+enabled = true
+provider = "turnstile"
+# TOML quoted key; value is an environment reference, never a stored credential.
+"secret" = "env(AUTH_TURNSTILE_SECRET_KEY)"
+
 [functions.submit]
 verify_jwt = false
 # The function validates the access token with auth.getUser before using service_role.

@@ -7,16 +7,17 @@ export function inspectConfig(env) {
     "VITE_SUPABASE_URL",
     "VITE_SUPABASE_ANON_KEY",
     "VITE_TURNSTILE_SITE_KEY",
+    "VITE_TURNSTILE_AUTH_SITE_KEY",
   ];
   for (const name of publicNames) {
     const value = env[name]?.trim();
     if (!value || /YOUR_|INSERISCI|example/i.test(value))
       problems.push(`${name}: manca un valore reale.`);
   }
-  if (/^[123]x0{20}(AA|AB|BB|FF)$/.test(env.VITE_TURNSTILE_SITE_KEY || ""))
-    problems.push(
-      "VITE_TURNSTILE_SITE_KEY: chiave Turnstile di prova vietata nel build di produzione.",
-    );
+  for (const name of ["VITE_TURNSTILE_SITE_KEY", "VITE_TURNSTILE_AUTH_SITE_KEY"]) {
+    if (/^[123]x0{20}(AA|AB|BB|FF)$/.test(env[name] || ""))
+      problems.push(`${name}: chiave Turnstile di prova vietata nel build di produzione.`);
+  }
   try {
     const url = new URL(env.VITE_SUPABASE_URL);
     if (

@@ -17,6 +17,8 @@ Non incollare segreti in chat o in Git. `.env.example` elenca tutti i nomi effet
 | `VITE_SUPABASE_URL` | Supabase → progetto → Connect / Settings → API: Project URL | Locale: `.env.local`; Pages → progetto → Settings → Variables and Secrets (o Environment variables) → Production | Pubblica |
 | `VITE_SUPABASE_ANON_KEY` | Supabase → Settings → API Keys: **Publishable key** `sb_publishable_…`, oppure Legacy API Keys → **anon** | Stesse due destinazioni del valore precedente | Pubblica; mai `secret`/`service_role` |
 | `VITE_TURNSTILE_SITE_KEY` | Cloudflare → Turnstile → widget produzione → **Site key** | `.env.local` per un widget locale separato; Pages → Production per widget produzione | Pubblica |
+| `VITE_TURNSTILE_AUTH_SITE_KEY` | Secondo widget Cloudflare Turnstile, dedicato ad Auth → **Site key** | `.env.local`; Pages → Production | Pubblica |
+| `AUTH_TURNSTILE_SECRET_KEY` | Secondo widget Auth → **Secret key** | Hosted: Supabase → Authentication → Bot and Abuse Protection → CAPTCHA Secret key; locale: ambiente CLI letto da `supabase/config.toml` | Segreto Auth, mai frontend/Pages/Edge Secrets |
 | `TURNSTILE_SECRET_KEY` | Stesso widget Turnstile → **Secret key** | **Supabase → Edge Functions → Secrets**, Key/Value → Save | Segreto backend |
 | `APP_ORIGIN` | Origine HTTPS effettiva di Pages, es. `https://NOME.pages.dev` | Supabase → Edge Functions → Secrets | Config backend, nessuno slash finale |
 | `TURNSTILE_HOSTNAME` | Solo dominio, es. `NOME.pages.dev` | Supabase → Edge Functions → Secrets | Config backend, senza protocollo/porta/percorso |
@@ -39,7 +41,7 @@ Cloudflare → **Workers & Pages → Create application → Pages → Connect to
 | Build command | `npm run build:production` |
 | Build output directory | `dist` |
 | Build environment variable | `NODE_VERSION` = `22` |
-| Production variables | **Solo le tre `VITE_*`** della tabella |
+| Production variables | **Solo le quattro `VITE_*`** della tabella |
 
 Scegli un nome progetto e annota l’hostname Pages previsto. Il nome effettivo viene confermato da Cloudflare dopo il deploy: se differisce, aggiorna Turnstile, i due valori backend dell’origine e gli URL OAuth. Nessun dominio viene prenotato da questo README. Non distribuire prima di aver completato i passaggi seguenti; se il primo build parte troppo presto, lascialo fallire e riprovalo a configurazione completa, senza rimuovere `check:config`.
 
@@ -51,9 +53,10 @@ Fonti: [integrazione Git](https://developers.cloudflare.com/pages/get-started/gi
 
 ## 3. Supabase: migrazioni SQL e ordine
 
-Seleziona il progetto **Free** corretto. Per la prima installazione il database applicativo deve essere nuovo. C’è **una sola migrazione**, da applicare una sola volta:
+Seleziona il progetto **Free** corretto. Per la prima installazione il database applicativo deve essere nuovo. Applica queste migrazioni in ordine. Su un progetto già inizializzato applica **solo la seconda**, senza riscrivere o rieseguire quella già applicata:
 
 1. `supabase/migrations/202610190001_radar.sql` — enum, tabelle, indici, RLS, ruoli protetti, RPC invio/moderazione, audit e limiti atomici.
+2. `supabase/migrations/202610200001_anonymous_privileges.sql` — impedisce moderazione e privilegi elevati alle identità anonime, mantenendo gli stati editoriali esistenti.
 
 Metodo consigliato, dalla radice del repository con Supabase CLI installata:
 
@@ -68,11 +71,29 @@ supabase migration list
 
 `YOUR_PROJECT_REF` è il riferimento progetto mostrato nella dashboard; non è il nome del sito. Verifica progetto e lista prima di `db push`; inserisci la password database solo nel prompt sicuro della CLI. Dopo il push la migrazione deve apparire applicata anche in remoto. Se la CLI manca, installala seguendo la [guida ufficiale](https://supabase.com/docs/guides/local-development/cli/getting-started).
 
-Alternativa senza CLI per lo schema: Supabase → **SQL Editor → New query**, incolla il file completo della migrazione ed eseguilo una volta. Se tabelle o tipi esistono già, fermati e controlla cosa è stato applicato: non cancellare il database e non rilanciare alla cieca. Questo metodo non registra la storia nella CLI. Se poi passi alla CLI, dopo aver verificato che lo schema corrisponda al file, allinea il registro con `supabase migration repair 202610190001 --status applied`; questo comando registra la versione, non applica lo SQL.
+Alternativa senza CLI per lo schema: Supabase → **SQL Editor → New query**, incolla ogni file completo nell’ordine sopra ed eseguilo una volta. Se tabelle o tipi esistono già, fermati e controlla cosa è stato applicato: non cancellare il database e non rilanciare alla cieca. Questo metodo non registra la storia nella CLI. Se poi passi alla CLI, dopo aver verificato che lo schema corrisponda al file, allinea il registro con `supabase migration repair 202610190001 --status applied`; questo comando registra la versione, non applica lo SQL. Per la seconda versione già eseguita manualmente usa analogamente `supabase migration repair 202610200001 --status applied`.
 
 **Non applicare in produzione** `supabase/tests/*.sql`: contengono fixture isolate per le prove. Il file `editorial/2026-10-20-prime-notizie.sql` contiene annunci reali datati, non è una migrazione, non è un seed automatico e non serve al lancio. Lascialo escluso finché le fonti e l’attualità non sono state rivalutate.
 
-## 4. Google OAuth e URL di ritorno
+## 4. Accesso anonimo, protezione Auth e Google per moderatori
+
+Prima di aprire gli invii al pubblico, configura **tutti e tre** questi valori nel progetto Supabase hosted:
+
+1. **Authentication → Sign In / Providers → Anonymous Sign-Ins**: abilita gli accessi anonimi.
+2. **Authentication → Settings → Bot and Abuse Protection → Enable CAPTCHA protection**: attiva CAPTCHA, seleziona **Turnstile**, inserisci la **Secret key del secondo widget Auth** e salva. La site key corrispondente è `VITE_TURNSTILE_AUTH_SITE_KEY`. Non usare qui il token o la chiave del widget di invio.
+3. **Authentication → Rate Limits → Anonymous Sign-Ins**: imposta **5 accessi anonimi/ora per indirizzo IP** (`rate_limit_anonymous_users = 5`). Il limite è applicato da Supabase Auth anche chiamando direttamente il suo endpoint: creare nuovi UID non lo elude. Usa il collegamento Rate Limits della dashboard se le etichette del menu cambiano. Il limite usa token bucket, con capacità iniziale 5 e reintegro orario; reti condivise possono raggiungerlo prima. Non abilita una protezione assoluta contro IP distribuiti: CAPTCHA e limite IP lavorano insieme.
+
+**Questi passaggi hosted non vengono applicati dalle migrazioni SQL o da `db push`.** Non pubblicare il frontend prima di aver verificato CAPTCHA e limite IP: il backend `submit` non può accertare come è configurato il servizio Auth.
+
+Il pulsante **Segnala** apre subito il modulo. La sessione anonima viene creata soltanto al momento necessario all'invio, dopo il CAPTCHA Auth, e viene riutilizzata nello stesso browser. Una sessione già autenticata, anonima o Google, resta in uso; la lettura del sito non crea utenti Auth. La cancellazione dei dati del browser, l'uscita o il cambio dispositivo impediscono di recuperare l'identità anonima e i suoi contributi privati. L'accesso Google rimane separato ed è destinato ai moderatori; non serve per segnalazioni o post.
+
+Gli utenti Anonymous Sign-Ins hanno il ruolo PostgreSQL `authenticated`, diverso dalla lettura pubblica con chiave `anon`. La nuova migrazione esclude esplicitamente gli anonimi dalla funzione `is_moderator()` tramite il dato `auth.users.is_anonymous` controllato sul server: anche una riga moderatore assegnata per errore non dà accesso. RLS conserva la lettura dei propri contributi e nega quelli privati altrui, audit e moderazione. Il client non può autopromuoversi.
+
+Per lo sviluppo Supabase locale `supabase/config.toml` abilita Anonymous Sign-Ins, CAPTCHA Turnstile e limite 5/ora. Fornisci `AUTH_TURNSTILE_SECRET_KEY` nell'ambiente del processo CLI prima di `supabase start`; è il segreto del widget Auth locale, non una variabile frontend. Le impostazioni locali non aggiornano il progetto hosted.
+
+Fonti: [Anonymous Sign-Ins](https://supabase.com/docs/guides/auth/auth-anonymous), [CAPTCHA Auth](https://supabase.com/docs/guides/auth/auth-captcha), [limiti Auth per IP](https://supabase.com/docs/guides/auth/rate-limits).
+
+### Google OAuth e URL di ritorno dei moderatori
 
 1. Supabase → **Authentication → Sign In / Providers → Google**: copia il callback del progetto, normalmente `https://YOUR_PROJECT_REF.supabase.co/auth/v1/callback`.
 2. Google Cloud Console → **Google Auth Platform / APIs & Services → Credentials**: configura schermata di consenso e client OAuth di tipo **Web application**. In **Authorized redirect URIs** inserisci il callback Supabase del punto 1, non il dominio Pages. Se richieste, le **Authorized JavaScript origins** sono l’origine Pages e l’origine locale usata.
@@ -83,7 +104,7 @@ Fonte: [Google OAuth Supabase](https://supabase.com/docs/guides/auth/social-logi
 
 ## 5. Turnstile e funzione backend separata
 
-Cloudflare → **Turnstile → Add widget**: scegli il widget Managed e consenti l’hostname effettivo `NOME.pages.dev`, senza `https://`. Usa un widget separato per localhost. Copia la **Site key** pubblica in Pages e la **Secret key** in Supabase → **Edge Functions → Secrets**. Nella stessa pagina inserisci `APP_ORIGIN` e `TURNSTILE_HOSTNAME` dalla tabella. Non usare le chiavi di test Cloudflare in produzione.
+Cloudflare → **Turnstile → Add widget**: crea **due widget distinti** (invio e Auth), ciascuno con proprie site key e secret key. Scegli il widget Managed e consenti l’hostname effettivo `NOME.pages.dev`, senza `https://`. Usa un widget separato per localhost. Per il widget **invio**, copia la **Site key** in `VITE_TURNSTILE_SITE_KEY` su Pages e la **Secret key** in `TURNSTILE_SECRET_KEY` su Supabase → **Edge Functions → Secrets**. Per il widget **Auth**, copia la Site key in `VITE_TURNSTILE_AUTH_SITE_KEY` e la Secret key nel CAPTCHA Auth della sezione 4. In **Edge Functions → Secrets** inserisci anche `APP_ORIGIN` e `TURNSTILE_HOSTNAME` dalla tabella. Non usare le chiavi di test Cloudflare in produzione.
 
 Pubblica la funzione completa, dalla radice del repository:
 
@@ -95,7 +116,7 @@ La CLI distribuisce `supabase/functions/submit/index.ts` e la dipendenza locale 
 
 `supabase/config.toml` contiene già `[functions.submit] verify_jwt = false`. Mantieni questa impostazione: disabilita il controllo legacy del gateway, **non** l’autenticazione applicativa. La funzione controlla il Bearer token con `auth.getUser` prima di usare il client privilegiato. Se modifichi le opzioni JWT dalla dashboard della funzione, non riattivare il controllo legacy senza adattare l’integrazione.
 
-Flusso implementato: origine esatta → autenticazione server → corpo limitato a 20.000 byte → verifica Turnstile Siteverify (`success`, hostname, azione `submit`) → campi ammessi → RPC di invio riservata al service role. Limiti atomici: **5 contributi/ora/account**, **10 abusi/ora/account**. Il client non sceglie autore, ruolo, stato editoriale o riscontro fattuale. Il token Turnstile è monouso; il widget viene rinnovato dopo ciascun tentativo.
+Flusso implementato: origine esatta → autenticazione server → corpo limitato a 20.000 byte → verifica Turnstile Siteverify (`success`, hostname, azione `submit`) → campi ammessi → RPC di invio riservata al service role. Limiti atomici: **5 contributi/ora/account**, **10 abusi/ora/account**. Il client non sceglie autore, ruolo, stato editoriale o riscontro fattuale. Il CAPTCHA Auth produce un token passato esclusivamente a `signInAnonymously({ options: { captchaToken } })`; il CAPTCHA invio produce un **altro token** per Edge `submit` con azione `submit`. I token Turnstile sono monouso: non riutilizzare quello consumato da Auth per la funzione; i widget vengono rinnovati dopo i tentativi. Se la sessione esiste già, il CAPTCHA Auth non è necessario. Ai limiti per UID degli invii si aggiunge il limite IP di creazione sessioni Auth, configurato nella sezione 4.
 
 Non ci sono percorsi di successo simulati nel codice distribuito. I mock sono soltanto nei test e non vengono importati dall’entrypoint Vite o dall’entrypoint Edge. Le richieste senza configurazione, autenticazione o verifica falliscono.
 
@@ -103,7 +124,7 @@ Fonti: [deploy Edge](https://supabase.com/docs/guides/functions/deploy), [Siteve
 
 ## 6. Assegnare al proprio account il ruolo di moderatore
 
-Dopo il primo deploy, apri il sito e accedi con Google una volta. In Supabase → **Authentication → Users**, trova il tuo account e copia il suo **User UID**. Poi, **solo nel SQL Editor amministrativo**, sostituisci l’UUID e lancia:
+Dopo il primo deploy, usa **Accesso moderatori** e accedi con Google una volta. Seleziona l’account permanente Google, mai una identità Anonymous, nell’elenco Users. In Supabase → **Authentication → Users**, trova il tuo account e copia il suo **User UID**. Poi, **solo nel SQL Editor amministrativo**, sostituisci l’UUID e lancia:
 
 ```sql
 insert into public.moderators(user_id)
@@ -134,7 +155,7 @@ npm audit
 npm run build
 ```
 
-Per anteprima locale, crea `.env.local` con le sole tre variabili pubbliche e avvia `npm run dev`. Per preparare il bundle destinato a Pages, dopo aver impostato valori **reali**:
+Per anteprima locale, crea `.env.local` con le sole quattro variabili pubbliche e avvia `npm run dev`. Per preparare il bundle destinato a Pages, dopo aver impostato valori **reali**:
 
 ```sh
 npm run check:config
@@ -153,14 +174,16 @@ supabase test db
 
 I file SQL di test predispongono pgTAP; usano utenti/fixture solo dentro transazioni annullate. `db reset` distrugge i dati locali: non è un comando da applicare al progetto pubblico.
 
-**Controlli eseguiti il 20 ottobre 2026:** build Vite/TypeScript riuscito; 49 test frontend, 7 test configurazione e 15 test Deno superati; audit npm con zero vulnerabilità. `build:production` si arresta correttamente perché in questo workspace non sono ancora presenti le tre variabili pubbliche reali. Le prove RLS eseguite su PostgreSQL isolato usano uno schema Auth locale e helper compatibili con pgTAP: non equivalgono a un test effettuato sul tuo progetto Supabase. L’ambiente Supabase completo e il percorso Google/Turnstile reali restano da verificare dopo la configurazione.
+**Controlli eseguiti dopo la modifica Anonymous (20 ottobre 2026):** build Vite/TypeScript riuscito; 66 test frontend/sessione, 9 test configurazione e 15 test Deno superati; copertura frontend 86,81% istruzioni e 81,08% rami; audit npm con zero vulnerabilità. Sono passate anche 58 asserzioni SQL su PostgreSQL isolato (41 esistenti + 17 sui privilegi anonimi). `build:production` si arresta correttamente perché in questo workspace non sono ancora presenti le quattro variabili pubbliche reali. Le prove RLS eseguite su PostgreSQL isolato usano uno schema Auth locale e helper compatibili con pgTAP: non equivalgono a un test effettuato sul tuo progetto Supabase. L’ambiente Supabase completo e il percorso Google/Turnstile reali restano da verificare dopo la configurazione.
 
 Dopo **Save and Deploy** su Pages, svolgi questi controlli da browser con account di prova e progetto Supabase di test, senza pubblicare eventi inventati nel progetto pubblico:
 
+- Senza sessione, aprire Segnala mostra subito il modulo e non crea un utente Auth. Il primo invio richiede due CAPTCHA distinti; Auth senza CAPTCHA o con token riutilizzato fallisce; il sesto tentativo di nuova sessione sullo stesso IP supera il bucket configurato. Verifica quest’ultimo test sul progetto di test, attendendo il refill o usando un IP dedicato.
+- Ricaricare conserva la sessione anonima e gli invii successivi richiedono solo CAPTCHA invio; una sessione Google esistente non viene sostituita.
 - Google apre il consenso e riporta al dominio Pages; la sessione resta attiva dopo un ricaricamento.
 - Una segnalazione pertinente diventa `published`, senza revisione e **non verificata**; un post resta `pending` e invisibile al secondo utente e all’anonimo.
 - Il moderatore legge la coda, corregge/approva/rifiuta/unisce/archivia. Le modifiche generano audit; una correzione obsoleta viene rifiutata.
-- Da sessione anonima non si leggono bozze, autori, abusi o registro; una chiave pubblica non scrive direttamente nelle tabelle e non assegna ruoli.
+- Senza sessione Auth non si leggono bozze, autori, abusi o registro; un utente Anonymous Sign-Ins legge soltanto i propri contributi privati; non legge quelli altrui né ottiene privilegi da `is_moderator()` o esegue RPC di moderazione, anche con riga moderatore assegnata per errore. Una chiave pubblica non scrive direttamente nelle tabelle e non assegna ruoli.
 - Token Turnstile mancante, scaduto, già usato, con hostname/azione errati impediscono l’invio; oltre il limite orario il backend risponde 429. Guarda **Edge Functions → submit → Logs**, senza stampare token o chiavi.
 - Dopo il deploy `dist` non contiene SQL, `.env`, fixture o codice test; l’attribuzione OSM è visibile da mobile e la console non segnala blocchi CSP della mappa/Turnstile.
 

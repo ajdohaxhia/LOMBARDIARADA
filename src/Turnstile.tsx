@@ -10,22 +10,29 @@ declare global {
 export default function Turnstile({
   onToken,
   resetKey = 0,
+  siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY,
+  action = "submit",
+  label = "Verifica anti-abuso per il contributo",
 }: {
   onToken: (s: string) => void;
   resetKey?: number;
+  siteKey?: string;
+  action?: string;
+  label?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
+    if (!siteKey) return;
     let widget: string | undefined;
     let disposed = false;
     const render = () => {
-      if (!disposed && window.turnstile && ref.current)
+      if (!disposed && !widget && window.turnstile && ref.current)
         widget = window.turnstile.render(ref.current, {
-          sitekey: import.meta.env.VITE_TURNSTILE_SITE_KEY,
+          sitekey: siteKey,
           callback: onToken,
           "expired-callback": () => onToken(""),
           "error-callback": () => onToken(""),
-          action: "submit",
+          action,
         });
     };
     if (window.turnstile) render();
@@ -52,9 +59,12 @@ export default function Turnstile({
       disposed = true;
       if (widget) window.turnstile?.remove(widget);
     };
-  }, [onToken, resetKey]);
-  return import.meta.env.VITE_TURNSTILE_SITE_KEY ? (
-    <div ref={ref} />
+  }, [onToken, resetKey, siteKey, action]);
+  return siteKey ? (
+    <div role="group" aria-label={label}>
+      <p className="muted">{label}</p>
+      <div ref={ref} />
+    </div>
   ) : (
     <p className="notice">
       Protezione anti-abuso da configurare. Invio disabilitato.

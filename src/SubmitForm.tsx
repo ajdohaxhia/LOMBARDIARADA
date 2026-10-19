@@ -2,11 +2,12 @@ import { useState, type FormEvent } from "react";
 import { Send, MapPin, ShieldCheck } from "lucide-react";
 import { categories, validateContribution } from "./domain";
 import { submit, supabase } from "./api";
+import { ensureSubmissionSession } from "./anonymous-session";
 import Turnstile from "./Turnstile";
 import RadarMap from "./Map";
 export default function SubmitForm({
   loggedIn,
-  onLogin,
+  onLogin: _onLogin,
   onDone,
   moderator = false,
 }: {
@@ -17,6 +18,8 @@ export default function SubmitForm({
 }) {
   const [sent, setSent] = useState(false);
   const [kind, setKind] = useState("report");
+  const [authToken, setAuthToken] = useState("");
+  const [authReset, setAuthReset] = useState(0);
   const [token, setToken] = useState("");
   const [reset, setReset] = useState(0);
   const [point, setPoint] = useState<[number, number] | null>(null);
@@ -24,7 +27,7 @@ export default function SubmitForm({
   const [message, setMessage] = useState("");
   async function send(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (busy || sent || !token) return;
+    if (busy || sent || !token || (!loggedIn && !authToken)) return;
     setMessage("");
     const f = new FormData(e.currentTarget);
     const data = {
@@ -46,6 +49,15 @@ export default function SubmitForm({
     }
     setBusy(true);
     try {
+      if (!supabase)
+        throw new Error(
+          "Servizio non ancora configurato. Gli invii non sono disponibili.",
+        );
+      if (!loggedIn && authToken === token)
+        throw new Error(
+          "Ripeti le due verifiche anti-abuso: richiedono token distinti.",
+        );
+      await ensureSubmissionSession(supabase, authToken);
       await submit(
         "contribution",
         { ...data, event_at: new Date(data.event_at).toISOString() },
@@ -63,6 +75,8 @@ export default function SubmitForm({
       setMessage((e as Error).message);
     } finally {
       setBusy(false);
+      setAuthToken("");
+      setAuthReset((r) => r + 1);
       setToken("");
       setReset((r) => r + 1);
     }
@@ -75,17 +89,13 @@ export default function SubmitForm({
         Le segnalazioni sono pubbliche subito, senza revisione preventiva.
         Notizie e post di quartiere passano dalla moderazione.
       </p>
-      {!loggedIn ? (
-        <div className="login-box">
-          <ShieldCheck size={32} />
-          <h2>Accedi per contribuire</h2>
-          <p>L’accesso aiuta a proteggere la comunità dagli abusi.</p>
-          <button className="primary" onClick={onLogin} disabled={!supabase}>
-            Accedi con Google
-          </button>
-          {!supabase && <p>Il servizio è in attesa della configurazione.</p>}
-        </div>
-      ) : sent ? (
+      {!loggedIn && (
+        <p className="muted">
+          Puoi inviare senza registrazione. Una sessione anonima viene creata
+          solo all’invio e conservata in questo browser.
+        </p>
+      )}
+      {sent ? (
         <div className="login-box">
           <ShieldCheck size={32} />
           <h2>
@@ -211,13 +221,25 @@ export default function SubmitForm({
               Rimuovi punto
             </button>
           )}
+          {!loggedIn && (
+            <Turnstile
+              onToken={setAuthToken}
+              resetKey={authReset}
+              siteKey={import.meta.env.VITE_TURNSTILE_AUTH_SITE_KEY || ""}
+              action="anonymous_signup"
+              label="Verifica anti-abuso per l’invio senza registrazione"
+            />
+          )}
           <Turnstile onToken={setToken} resetKey={reset} />
           <p className="notice">
             {kind === "report"
               ? "Con l’invio la segnalazione diventa immediatamente pubblica. Non includere dati personali, indirizzi domestici o accuse identificabili. La pubblicazione non verifica i fatti."
               : "L’invio non pubblica il contributo. L’approvazione editoriale non equivale a verifica dei fatti."}
           </p>
-          <button className="primary" disabled={busy || !token}>
+          <button
+            className="primary"
+            disabled={busy || !supabase || !token || (!loggedIn && !authToken)}
+          >
             <Send size={16} />
             {busy
               ? "Invio in corso…"

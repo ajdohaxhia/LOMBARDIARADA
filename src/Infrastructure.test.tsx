@@ -108,3 +108,55 @@ it("API fail closed sans configuration et traduit erreurs serveur", async () => 
     "Invio non riuscito",
   );
 });
+it("Turnstile mantiene separati CAPTCHA Auth e invio con un solo script", () => {
+  const authToken = vi.fn();
+  const submissionToken = vi.fn();
+  const view = render(
+    <>
+      <Turnstile
+        siteKey="auth-site"
+        action="anonymous-auth"
+        label="Verifica sessione"
+        onToken={authToken}
+      />
+      <Turnstile
+        siteKey="submission-site"
+        action="submit"
+        label="Verifica contributo"
+        onToken={submissionToken}
+      />
+    </>,
+  );
+  expect(
+    screen.getByRole("group", { name: "Verifica sessione" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("group", { name: "Verifica contributo" }),
+  ).toBeInTheDocument();
+  expect(document.querySelectorAll("#turnstile-script")).toHaveLength(1);
+  const remove = vi.fn();
+  window.turnstile = {
+    render: vi.fn().mockImplementation((_element, options) => {
+      const key = options.sitekey as string;
+      (options.callback as (token: string) => void)(`${key}-token`);
+      return key;
+    }),
+    remove,
+  };
+  fireEvent.load(document.getElementById("turnstile-script")!);
+  expect(window.turnstile.render).toHaveBeenCalledWith(
+    expect.any(HTMLElement),
+    expect.objectContaining({ sitekey: "auth-site", action: "anonymous-auth" }),
+  );
+  expect(window.turnstile.render).toHaveBeenCalledWith(
+    expect.any(HTMLElement),
+    expect.objectContaining({ sitekey: "submission-site", action: "submit" }),
+  );
+  expect(authToken).toHaveBeenCalledExactlyOnceWith("auth-site-token");
+  expect(submissionToken).toHaveBeenCalledExactlyOnceWith(
+    "submission-site-token",
+  );
+  view.unmount();
+  expect(remove).toHaveBeenCalledWith("auth-site");
+  expect(remove).toHaveBeenCalledWith("submission-site");
+});

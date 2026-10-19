@@ -5,6 +5,7 @@ import {
   fireEvent,
   waitFor,
   cleanup,
+  act,
 } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import App from "./App";
@@ -14,7 +15,16 @@ import Abuse from "./Abuse";
 import type { Contribution } from "./domain";
 const mock = vi.hoisted(() => ({
   items: [] as Contribution[],
-  user: null as null | { id: string },
+  user: null as null | { id: string; is_anonymous?: boolean },
+  signup: vi.fn(),
+  getUser: vi.fn(),
+  authChange: null as
+    | null
+    | ((
+        event: string,
+        session: { user: { id: string; is_anonymous?: boolean } } | null,
+      ) => void),
+  session: vi.fn(),
   mod: false,
   error: null as null | { message: string },
   rpc: vi.fn(),
@@ -26,10 +36,13 @@ vi.mock("./api", () => ({
   publicFields: "id,title",
   supabase: {
     auth: {
-      getUser: async () => ({ data: { user: mock.user } }),
-      onAuthStateChange: () => ({
-        data: { subscription: { unsubscribe: vi.fn() } },
-      }),
+      getUser: mock.getUser,
+      getSession: mock.session,
+      signInAnonymously: mock.signup,
+      onAuthStateChange: (callback: typeof mock.authChange) => {
+        mock.authChange = callback;
+        return { data: { subscription: { unsubscribe: vi.fn() } } };
+      },
       signInWithOAuth: mock.login,
       signOut: mock.logout,
     },
@@ -143,15 +156,59 @@ const row = (p: Partial<Contribution> = {}): Contribution => ({
 beforeEach(() => {
   mock.items = [];
   mock.user = null;
+  mock.authChange = null;
+  mock.getUser
+    .mockReset()
+    .mockImplementation(async () => ({ data: { user: mock.user } }));
   mock.mod = false;
   mock.error = null;
   mock.rpc.mockReset().mockResolvedValue({ error: null });
   mock.submit.mockReset().mockResolvedValue({});
   mock.login.mockReset().mockResolvedValue({ error: null });
+  mock.session.mockReset().mockImplementation(async () => ({
+    data: { session: { user: mock.user || { id: "existing" } } },
+    error: null,
+  }));
+  mock.signup.mockReset();
   window.scrollTo = vi.fn();
 });
 afterEach(cleanup);
 describe("pubblico", () => {
+  it("mantiene la sessione anonima nuova quando la lettura iniziale termina in ritardo", async () => {
+    let resolveInitial!: (value: { data: { user: null } }) => void;
+    mock.getUser.mockReturnValue(
+      new Promise((resolve) => {
+        resolveInitial = resolve;
+      }),
+    );
+    render(<App />);
+    await screen.findByText("Nessuna notizia pubblicata");
+    await act(async () => {
+      mock.authChange?.("SIGNED_IN", {
+        user: { id: "new-anonymous", is_anonymous: true },
+      });
+    });
+    expect(
+      screen.getAllByRole("button", { name: "I miei contributi" }).length,
+    ).toBeGreaterThan(0);
+    await act(async () => {
+      resolveInitial({ data: { user: null } });
+    });
+    expect(
+      screen.getAllByRole("button", { name: "I miei contributi" }).length,
+    ).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: /^Segnala$/ }));
+    expect(screen.getByLabelText("Titolo")).toBeInTheDocument();
+    expect(screen.getAllByText("Conferma anti-abuso")).toHaveLength(1);
+    expect(mock.signup).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "I miei contributi" })[0],
+    );
+    expect(
+      await screen.findByText(/Nessun contributo riservato disponibile/),
+    ).toBeInTheDocument();
+  });
+
   it("mostra home vuota, avvisi e login senza eventi inventati", async () => {
     render(<App />);
     expect(
@@ -173,13 +230,43 @@ describe("pubblico", () => {
         /a portata di comunità|Le cose migliori iniziano vicino|Più comunità/,
       ),
     ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /^Accedi$/ }));
+    fireEvent.click(
+      screen.getAllByRole("button", { name: /^Accesso moderatori$/ })[0],
+    );
     await waitFor(() => expect(mock.login).toHaveBeenCalled());
     expect(
       screen.queryByRole("button", { name: "Moderazione" }),
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Segnala$/ }));
-    expect(screen.getByText("Accedi per contribuire")).toBeInTheDocument();
+    expect(screen.getByLabelText("Titolo")).toBeInTheDocument();
+    expect(mock.signup).not.toHaveBeenCalled();
+  });
+  it("apre Segnala senza avviare autenticazione o richiedere Google", async () => {
+    render(<App />);
+    await screen.findByText("Nessuna notizia pubblicata");
+    fireEvent.click(screen.getByRole("button", { name: /^Segnala$/ }));
+    expect(screen.getByLabelText("Titolo")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Accedi per contribuire"),
+    ).not.toBeInTheDocument();
+    expect(mock.signup).not.toHaveBeenCalled();
+    expect(mock.login).not.toHaveBeenCalled();
+  });
+  it("esclude la sessione anonima dalla moderazione anche con RPC favorevole", async () => {
+    mock.user = { id: "anonymous", is_anonymous: true };
+    mock.mod = true;
+    render(<App />);
+    await screen.findByText("Nessuna notizia pubblicata");
+    expect(
+      screen.queryByRole("button", { name: "Moderazione" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: "Accesso moderatori" }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByRole("button", { name: "I miei contributi" }).length,
+    ).toBeGreaterThan(0);
+    expect(mock.signup).not.toHaveBeenCalled();
   });
   it("separa fonti e riscontro, apre abuso e bacheche", async () => {
     mock.items = [

@@ -168,13 +168,27 @@ export default function App() {
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60000);
     if (!supabase) return () => clearInterval(timer);
-    supabase.auth.getUser().then(({ data }) => setUser(data.user));
+    let active = true;
+    let authChanged = false;
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) =>
-      setUser(session?.user || null),
-    );
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      authChanged = true;
+      if (active) setUser(session?.user || null);
+    });
+    void supabase.auth
+      .getUser()
+      .then(({ data }) => {
+        if (active && !authChanged) setUser(data.user);
+      })
+      .catch(() => {
+        if (active && !authChanged)
+          setError(
+            "Impossibile leggere la sessione. Riprova prima di inviare.",
+          );
+      });
     return () => {
+      active = false;
       clearInterval(timer);
       subscription.unsubscribe();
     };
@@ -187,6 +201,10 @@ export default function App() {
     let checkRole = () => {};
     if (supabase && user) {
       checkRole = () => {
+        if (user.is_anonymous) {
+          setMod(false);
+          return;
+        }
         void supabase?.rpc("is_moderator").then(({ data, error }) => {
           if (active) setMod(!error && data === true);
         });
@@ -277,9 +295,9 @@ export default function App() {
               {label}
             </button>
           ))}
-          {!user && (
+          {(!user || user.is_anonymous) && (
             <button className="mobile-auth" onClick={() => void login()}>
-              Accedi con Google
+              Accesso moderatori
             </button>
           )}
           {user && (
@@ -310,9 +328,10 @@ export default function App() {
                 <LogOut size={18} />
               </button>
             </>
-          ) : (
+          ) : null}
+          {(!user || user.is_anonymous) && (
             <button className="login" onClick={() => void login()}>
-              Accedi <ArrowUpRight size={15} />
+              Accesso moderatori <ArrowUpRight size={15} />
             </button>
           )}
           <button className="primary small" onClick={() => go("submit")}>
@@ -608,11 +627,14 @@ export default function App() {
           <summary>Privacy e trasparenza</summary>
           <p>
             Non usiamo analytics, pubblicità o geolocalizzazione delle persone.
-            L’accesso Google è gestito da Supabase. La mappa contatta i server
-            OpenStreetMap e la protezione anti-abuso contatta Cloudflare. Non
-            inviare dati personali di terzi. Prima dell’apertura pubblica, il
-            gestore deve pubblicare l’informativa privacy e un recapito per le
-            richieste sui dati.
+            Supabase gestisce una sessione anonima per inviare contributi senza
+            registrazione e l’accesso Google dei moderatori. La sessione anonima
+            è conservata nel browser; cancellandola puoi perdere l’accesso ai
+            tuoi contributi privati. La mappa contatta i server OpenStreetMap e
+            la protezione anti-abuso contatta Cloudflare. Non inviare dati
+            personali di terzi. Prima dell’apertura pubblica, il gestore deve
+            pubblicare l’informativa privacy e un recapito per le richieste sui
+            dati.
           </p>
         </details>
       </footer>
