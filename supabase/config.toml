@@ -1,0 +1,4 @@
+project_id = "lombardia-radar"
+[functions.submit]
+verify_jwt = false
+# The function validates the access token with auth.getUser before using service_role.

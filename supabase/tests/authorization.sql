@@ -1,0 +1,16 @@
+begin;
+select plan(10);
+select has_table('public','contributions');
+select has_table('public','moderation_log');
+select ok((select relrowsecurity from pg_class where oid='public.contributions'::regclass),'RLS enabled');
+select ok(not has_table_privilege('authenticated','public.contributions','INSERT'),'No direct authenticated insert');
+select ok(not has_table_privilege('authenticated','public.contributions','UPDATE'),'No direct authenticated update');
+select ok(not has_table_privilege('authenticated','public.moderators','INSERT'),'No self promotion');
+select ok(not has_function_privilege('authenticated','public.submit_contribution(uuid,jsonb)','EXECUTE'),'Cannot bypass Turnstile RPC');
+select ok(not has_function_privilege('anon','public.submit_abuse(uuid,jsonb)','EXECUTE'),'Anonymous cannot submit abuse RPC');
+select ok(not has_column_privilege('anon','public.contributions','author_id','SELECT'),'Authors are private');
+set local role authenticated;
+select throws_ok($$select public.moderate_contribution('00000000-0000-0000-0000-000000000000','approve')$$,'42501','Accesso negato','Non moderators cannot approve');
+reset role;
+select * from finish();
+rollback;
